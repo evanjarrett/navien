@@ -118,6 +118,31 @@ each variant separately before trusting tail-byte fields. The HA per-byte sensor
 reconstruction used for this page **blends** subframes by construction, which is
 why the cumulative counters must be read from the dominant subframe.
 
+### Raw-frame text sensors (for continued reverse-engineering)
+
+To support exactly this analysis, the component can expose each parsed frame as a
+hex string via two optional `text_sensor` flags:
+
+```yaml
+text_sensor:
+  - platform: navien
+    navien: navien_main
+    name: "Water Raw Frame"
+    water_raw: true
+  - platform: navien
+    navien: navien_main
+    name: "Gas Raw Frame"
+    gas_raw: true
+```
+
+Each publishes one **fully-parsed, frame-aligned** payload as space-separated
+hex — so unlike the old per-byte HA sensors, the bytes within a value are
+guaranteed to come from the *same* frame (no blending). The first hex pair is
+packet offset 6 (the start of the `WATER_DATA` / `GAS_DATA` struct), so packet
+byte `N` is hex pair index `N - 6`. Record these in HA history and split per byte
+in SQL (`split`/`substr`) to study how the unknown positions move with events —
+and to finally separate the sub-frame variants the blending hid.
+
 ## Note: panel/controller version vs the app
 
 The app's "Software Update Ver. 17.0" is the **NaviLink/app** firmware, not the

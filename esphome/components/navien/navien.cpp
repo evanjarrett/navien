@@ -154,8 +154,10 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.water.error_code = water.error_code_hi << 8 | water.error_code_lo;
     this->state.water.error_level = water.error_level;
 
-    if (this->is_rt)
+    if (this->is_rt) {
       this->update_water_sensors();
+      publish_raw_frame(this->water_raw_sensor, reinterpret_cast<const uint8_t *>(&water), sizeof(WATER_DATA));
+    }
   }
 
   void Navien::on_gas(const GAS_DATA & gas, uint8_t src){
@@ -225,8 +227,10 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.cumulative_domestic_usage_cnt = (gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo) * 10; // ×10: "10 usage increments"
     this->state.hotbutton_mode_enabled = gas.system_status_2 & SYS_STATUS_2_HOTBUTTON_ENABLED;
 
-    if (this->is_rt)
+    if (this->is_rt) {
       this->update_gas_sensors();
+      publish_raw_frame(this->gas_raw_sensor, reinterpret_cast<const uint8_t *>(&gas), sizeof(GAS_DATA));
+    }
   }
 
   void Navien::on_error(){
@@ -577,6 +581,25 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       default:
         return "unknown";
     }
+  }
+
+  void Navien::publish_raw_frame(text_sensor::TextSensor *sensor, const uint8_t *data, size_t len) {
+    if (sensor == nullptr)
+      return;
+    // 3 chars per byte ("XX ") + null terminator. Cap defensively.
+    static const size_t MAX_BYTES = 64;
+    if (len > MAX_BYTES)
+      len = MAX_BYTES;
+    char buf[3 * MAX_BYTES + 1];
+    size_t pos = 0;
+    for (size_t i = 0; i < len; i++) {
+      pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X ", data[i]);
+    }
+    if (pos > 0)
+      buf[pos - 1] = '\0';  // trim trailing space
+    else
+      buf[0] = '\0';
+    sensor->publish_state(buf);
   }
 
   bool Navien::is_dhw_only(DEVICE_TYPE type) {

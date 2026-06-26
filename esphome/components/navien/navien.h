@@ -191,6 +191,11 @@ namespace navien {
     void set_total_operating_time_sensor(sensor::Sensor *sensor) { total_operating_time_sensor = sensor; }
     void set_controller_version_sensor(text_sensor::TextSensor *sensor) { controller_version_sensor = sensor; }
     void set_panel_version_sensor(text_sensor::TextSensor *sensor) { panel_version_sensor = sensor; }
+    // Raw frame dumps (hex) for reverse-engineering unknown bytes. Each is a
+    // space-separated hex string of one fully-parsed frame's payload, where the
+    // first byte = packet offset 6. Frame-aligned (no cross-frame blending).
+    void set_water_raw_sensor(text_sensor::TextSensor *sensor) { water_raw_sensor = sensor; }
+    void set_gas_raw_sensor(text_sensor::TextSensor *sensor) { gas_raw_sensor = sensor; }
     void set_cumulative_dwh_usage_hours_sensor(sensor::Sensor *sensor) { cumulative_dwh_usage_hours_sensor = sensor; }
     void set_cumulative_sh_usage_hours_sensor(sensor::Sensor *sensor) { cumulative_sh_usage_hours_sensor = sensor; }
     void set_cumulative_domestic_usage_cnt_sensor(sensor::Sensor *sensor) { cumulative_domestic_usage_cnt_sensor = sensor; }
@@ -255,6 +260,8 @@ namespace navien {
     text_sensor::TextSensor *device_type_sensor = nullptr;
     text_sensor::TextSensor *operating_state_sensor = nullptr;
     text_sensor::TextSensor *recirc_mode_sensor = nullptr;
+    text_sensor::TextSensor *water_raw_sensor = nullptr;
+    text_sensor::TextSensor *gas_raw_sensor = nullptr;
 
     binary_sensor::BinarySensor *boiler_active_sensor = nullptr;
     binary_sensor::BinarySensor *conn_status_sensor = nullptr;
@@ -306,6 +313,10 @@ namespace navien {
      */
     virtual void update_water_sensors();
     virtual void update_gas_sensors();
+
+    // Publish a frame's payload bytes as a space-separated hex string to the
+    // given raw text sensor (no-op if the sensor isn't configured).
+    static void publish_raw_frame(text_sensor::TextSensor *sensor, const uint8_t *data, size_t len);
 
     /**
      * Helper function to convert operating state enum to string
