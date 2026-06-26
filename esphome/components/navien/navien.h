@@ -270,6 +270,12 @@ namespace navien {
     static const uint8_t RAW_BYTE_SLOTS = 64;
     sensor::Sensor *water_byte_sensors_[RAW_BYTE_SLOTS] = {};
     sensor::Sensor *gas_byte_sensors_[RAW_BYTE_SLOTS] = {};
+    // Latest frame payloads, stashed in on_water/on_gas so the raw sensors can
+    // publish from the normal update_*_sensors() path (works without real_time).
+    uint8_t water_raw_buf_[RAW_BYTE_SLOTS] = {};
+    uint8_t gas_raw_buf_[RAW_BYTE_SLOTS] = {};
+    size_t water_raw_len_ = 0;
+    size_t gas_raw_len_ = 0;
 
     binary_sensor::BinarySensor *boiler_active_sensor = nullptr;
     binary_sensor::BinarySensor *conn_status_sensor = nullptr;

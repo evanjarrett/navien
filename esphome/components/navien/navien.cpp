@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstring>
 #include <string>
 
 #include "esphome.h"
@@ -154,12 +155,13 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.water.error_code = water.error_code_hi << 8 | water.error_code_lo;
     this->state.water.error_level = water.error_level;
 
-    if (this->is_rt) {
+    // Stash the raw frame so the raw sensors publish on the normal update path
+    // (update_water_sensors), independent of real_time mode.
+    this->water_raw_len_ = sizeof(WATER_DATA);
+    memcpy(this->water_raw_buf_, &water, this->water_raw_len_);
+
+    if (this->is_rt)
       this->update_water_sensors();
-      const uint8_t *raw = reinterpret_cast<const uint8_t *>(&water);
-      publish_raw_frame(this->water_raw_sensor, raw, sizeof(WATER_DATA));
-      publish_raw_bytes(this->water_byte_sensors_, raw, HDR_SIZE, sizeof(WATER_DATA));
-    }
   }
 
   void Navien::on_gas(const GAS_DATA & gas, uint8_t src){
@@ -229,12 +231,13 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.cumulative_domestic_usage_cnt = (gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo) * 10; // ×10: "10 usage increments"
     this->state.hotbutton_mode_enabled = gas.system_status_2 & SYS_STATUS_2_HOTBUTTON_ENABLED;
 
-    if (this->is_rt) {
+    // Stash the raw frame so the raw sensors publish on the normal update path
+    // (update_gas_sensors), independent of real_time mode.
+    this->gas_raw_len_ = sizeof(GAS_DATA);
+    memcpy(this->gas_raw_buf_, &gas, this->gas_raw_len_);
+
+    if (this->is_rt)
       this->update_gas_sensors();
-      const uint8_t *raw = reinterpret_cast<const uint8_t *>(&gas);
-      publish_raw_frame(this->gas_raw_sensor, raw, sizeof(GAS_DATA));
-      publish_raw_bytes(this->gas_byte_sensors_, raw, HDR_SIZE, sizeof(GAS_DATA));
-    }
   }
 
   void Navien::on_error(){
@@ -383,6 +386,11 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     if (this->error_level_sensor != nullptr){
         this->error_level_sensor->publish_state(this->state.water.error_level);
     }
+
+    if (this->water_raw_len_ > 0) {
+      publish_raw_frame(this->water_raw_sensor, this->water_raw_buf_, this->water_raw_len_);
+      publish_raw_bytes(this->water_byte_sensors_, this->water_raw_buf_, HDR_SIZE, this->water_raw_len_);
+    }
   }
 
   void Navien::update_gas_sensors(){
@@ -444,6 +452,11 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       this->controller_version_sensor->publish_state(this->state.controller_version);
     if (this->panel_version_sensor != nullptr)
       this->panel_version_sensor->publish_state(this->state.panel_version);
+
+    if (this->gas_raw_len_ > 0) {
+      publish_raw_frame(this->gas_raw_sensor, this->gas_raw_buf_, this->gas_raw_len_);
+      publish_raw_bytes(this->gas_byte_sensors_, this->gas_raw_buf_, HDR_SIZE, this->gas_raw_len_);
+    }
   }
 
   void Navien::loop() {
