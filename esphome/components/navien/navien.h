@@ -121,15 +121,15 @@ namespace navien {
       float  sh_return_temp; // combi (and space heat?) models
       float  outdoor_temp;
       uint8_t heat_capacity;
-      uint16_t total_dhw_usage;
+      uint32_t total_dhw_usage;             // bytes 30/31 ×10 ("10 usage increments") — exceeds 16-bit
       uint16_t total_operating_time;
       uint16_t cumulative_dwh_usage_hours;
       uint16_t cumulative_sh_usage_hours;
-      uint16_t cumulative_domestic_usage_cnt;
+      uint32_t cumulative_domestic_usage_cnt; // bytes 30/31 ×10
       uint16_t days_since_install;
     } gas;
 
-    uint16_t cumulative_domestic_usage_cnt;
+    uint32_t cumulative_domestic_usage_cnt; // bytes 30/31 ×10
     uint16_t days_since_install;
     std::string controller_version;
     std::string panel_version;
@@ -326,6 +326,16 @@ namespace navien {
      * Helper function to convert recirculation mode enum to string
      */
     static std::string device_recirc_mode_to_str(DEVICE_RECIRC_MODE state);
+
+    /**
+     * True for DHW-only tankless families (NPE/NPN and cascade variants) that
+     * have no space-heating loop. The combi/space-heating gas fields
+     * (sh_*_temp, cumulative_dwh/sh_usage_hours) were reverse-engineered on
+     * NCB-H combi units and do NOT decode correctly on these models — on an
+     * NPE-240A2 they read 0 or fast-varying garbage. Used to gate publishing
+     * those sensors. See doc/npe-240a2-decode.md.
+     */
+    static bool is_dhw_only(DEVICE_TYPE type);
 
   protected:
     // Data, extracted from gas and water packers and stored

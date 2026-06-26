@@ -193,7 +193,10 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.gas.outdoor_temp = NavienLink::ot2c(gas.outdoor_temp);
     this->state.device_type = static_cast<DEVICE_TYPE>(gas.device_type);
     this->state.gas.heat_capacity = gas.heat_capacity * 0.5f;
-    this->state.gas.total_dhw_usage = gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo;
+    // Bytes 30/31 are the Domestic Usage Counter "in 10 usage increments" (see
+    // navien_proto.h). Multiply the raw 16-bit value by 10 to get the real draw
+    // count. Verified on NPE-240A2 against the Navien app ("Domestic Usage Cnt").
+    this->state.gas.total_dhw_usage = (gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo) * 10;
     this->state.gas.total_operating_time = gas.total_operating_time_hi << 8 | gas.total_operating_time_lo;
     this->state.gas.accumulated_gas_usage = gas.cumulative_gas_hi << 8 | gas.cumulative_gas_lo;
     this->state.gas.current_gas_usage = gas.current_gas_hi << 8 | gas.current_gas_lo;
@@ -219,7 +222,7 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.panel_version = panVers.substr(0, 1) + "." + panVers.substr(1, 1);
 
     this->state.days_since_install = gas.days_since_install_hi << 8 | gas.days_since_install_lo;
-    this->state.cumulative_domestic_usage_cnt = gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo;
+    this->state.cumulative_domestic_usage_cnt = (gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo) * 10; // ×10: "10 usage increments"
     this->state.hotbutton_mode_enabled = gas.system_status_2 & SYS_STATUS_2_HOTBUTTON_ENABLED;
 
     if (this->is_rt)
@@ -400,11 +403,15 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     }
     if (this->heat_capacity_sensor != nullptr)
       this->heat_capacity_sensor->publish_state(this->state.gas.heat_capacity);
-    if (this->sh_set_temp_sensor != nullptr)
+    // Space-heating fields only decode correctly on combi/boiler models. On
+    // DHW-only tankless units (NPE/NPN family, e.g. NPE-240A2) these bytes carry
+    // unrelated data, so skip publishing them. See doc/npe-240a2-decode.md.
+    const bool has_space_heating = !is_dhw_only(this->state.device_type);
+    if (has_space_heating && this->sh_set_temp_sensor != nullptr)
       this->sh_set_temp_sensor->publish_state(this->state.gas.sh_set_temp);
-    if (this->sh_outlet_temp_sensor != nullptr)
+    if (has_space_heating && this->sh_outlet_temp_sensor != nullptr)
       this->sh_outlet_temp_sensor->publish_state(this->state.gas.sh_outlet_temp);
-    if (this->sh_return_temp_sensor != nullptr)
+    if (has_space_heating && this->sh_return_temp_sensor != nullptr)
       this->sh_return_temp_sensor->publish_state(this->state.gas.sh_return_temp);
     if (this->outdoor_temp_sensor != nullptr)
       this->outdoor_temp_sensor->publish_state(this->state.gas.outdoor_temp);
@@ -414,9 +421,12 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       this->total_dhw_usage_sensor->publish_state(this->state.gas.total_dhw_usage);
     if (this->total_operating_time_sensor != nullptr)
       this->total_operating_time_sensor->publish_state(this->state.gas.total_operating_time);
-    if (this->cumulative_dwh_usage_hours_sensor != nullptr)
+    // 38/39 (DHW usage hours) reads 0 and 40/41 (SH usage hours) reads fast-
+    // varying garbage on NPE-240A2 — both were derived on NCB-H combi units.
+    // Gate on space-heating models until the true NPE2 positions are confirmed.
+    if (has_space_heating && this->cumulative_dwh_usage_hours_sensor != nullptr)
       this->cumulative_dwh_usage_hours_sensor->publish_state(this->state.gas.cumulative_dwh_usage_hours);
-    if (this->cumulative_sh_usage_hours_sensor != nullptr)
+    if (has_space_heating && this->cumulative_sh_usage_hours_sensor != nullptr)
       this->cumulative_sh_usage_hours_sensor->publish_state(this->state.gas.cumulative_sh_usage_hours);
     if (this->cumulative_domestic_usage_cnt_sensor != nullptr)
       this->cumulative_domestic_usage_cnt_sensor->publish_state(this->state.cumulative_domestic_usage_cnt);
@@ -566,6 +576,20 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
         return "CAS NVW";
       default:
         return "unknown";
+    }
+  }
+
+  bool Navien::is_dhw_only(DEVICE_TYPE type) {
+    switch(type){
+      case NPE:
+      case CAS_NPE:
+      case NPN:
+      case CAS_NPN:
+      case NPE2:
+      case CAS_NPE2:
+        return true;
+      default:
+        return false;
     }
   }
 

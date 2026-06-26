@@ -19,6 +19,9 @@ Gas and water status segments are selected by destination/service routing in hea
 
 For full source/destination/direction routing details, see [Protocol Data Flow](./protocol_data_flow.md).
 
+For model-specific field behavior (which decoded fields differ on DHW-only
+tankless units vs NCB-H combi), see [NPE-240A2 decode notes](./npe-240a2-decode.md).
+
 ```
 +---------------------------------------------------
 | F7 | Unknown Byte | Src | Dst | Direction | ....
