@@ -196,6 +196,10 @@ namespace navien {
     // first byte = packet offset 6. Frame-aligned (no cross-frame blending).
     void set_water_raw_sensor(text_sensor::TextSensor *sensor) { water_raw_sensor = sensor; }
     void set_gas_raw_sensor(text_sensor::TextSensor *sensor) { gas_raw_sensor = sensor; }
+    // Per-byte numeric sensors, indexed by absolute packet offset, for exposing
+    // any (incl. still-unknown) byte to HA. Frame-aligned, like the raw dumps.
+    void set_water_byte_sensor(uint8_t offset, sensor::Sensor *sensor) { if (offset < RAW_BYTE_SLOTS) water_byte_sensors_[offset] = sensor; }
+    void set_gas_byte_sensor(uint8_t offset, sensor::Sensor *sensor) { if (offset < RAW_BYTE_SLOTS) gas_byte_sensors_[offset] = sensor; }
     void set_cumulative_dwh_usage_hours_sensor(sensor::Sensor *sensor) { cumulative_dwh_usage_hours_sensor = sensor; }
     void set_cumulative_sh_usage_hours_sensor(sensor::Sensor *sensor) { cumulative_sh_usage_hours_sensor = sensor; }
     void set_cumulative_domestic_usage_cnt_sensor(sensor::Sensor *sensor) { cumulative_domestic_usage_cnt_sensor = sensor; }
@@ -262,6 +266,10 @@ namespace navien {
     text_sensor::TextSensor *recirc_mode_sensor = nullptr;
     text_sensor::TextSensor *water_raw_sensor = nullptr;
     text_sensor::TextSensor *gas_raw_sensor = nullptr;
+    // Indexed by absolute packet offset (0..RAW_BYTE_SLOTS-1); most stay null.
+    static const uint8_t RAW_BYTE_SLOTS = 64;
+    sensor::Sensor *water_byte_sensors_[RAW_BYTE_SLOTS] = {};
+    sensor::Sensor *gas_byte_sensors_[RAW_BYTE_SLOTS] = {};
 
     binary_sensor::BinarySensor *boiler_active_sensor = nullptr;
     binary_sensor::BinarySensor *conn_status_sensor = nullptr;
@@ -317,6 +325,10 @@ namespace navien {
     // Publish a frame's payload bytes as a space-separated hex string to the
     // given raw text sensor (no-op if the sensor isn't configured).
     static void publish_raw_frame(text_sensor::TextSensor *sensor, const uint8_t *data, size_t len);
+
+    // Publish each configured per-byte sensor. data[i] is the byte at packet
+    // offset (base_offset + i); sensors is indexed by absolute packet offset.
+    static void publish_raw_bytes(sensor::Sensor *const *sensors, const uint8_t *data, uint8_t base_offset, size_t len);
 
     /**
      * Helper function to convert operating state enum to string

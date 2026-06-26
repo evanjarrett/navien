@@ -69,6 +69,28 @@ CONF_ERROR_CODE                 = "error_code"
 CONF_ERROR_LEVEL                = "error_level"
 
 
+# Optional raw per-byte sensors for reverse-engineering. Any packet byte can be
+# exposed to HA as a numeric sensor via keys like `gas_byte_32` / `water_byte_19`
+# (offset = absolute packet offset). The payload begins at offset 6.
+GAS_BYTE_RANGE = range(6, 48)    # GAS_DATA spans packet bytes 6..47
+WATER_BYTE_RANGE = range(6, 40)  # WATER_DATA spans packet bytes 6..39
+
+def _raw_byte_schema():
+    schema = {}
+    for off in GAS_BYTE_RANGE:
+        schema[cv.Optional(f"gas_byte_{off}")] = sensor.sensor_schema(
+            accuracy_decimals=0,
+            icon="mdi:hexadecimal",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        )
+    for off in WATER_BYTE_RANGE:
+        schema[cv.Optional(f"water_byte_{off}")] = sensor.sensor_schema(
+            accuracy_decimals=0,
+            icon="mdi:hexadecimal",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        )
+    return schema
+
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
         {
@@ -197,6 +219,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SRC): cv.int_range(min=0, max=15)
         }
     )
+    .extend(_raw_byte_schema())
     .extend(cv.polling_component_schema("5s"))
     .extend(uart.UART_DEVICE_SCHEMA)
 )
@@ -326,3 +349,15 @@ async def to_code(config):
     if CONF_ERROR_LEVEL in config:
         sens = await sensor.new_sensor(config[CONF_ERROR_LEVEL])
         cg.add(var.set_error_level_sensor(sens))
+
+    # Optional raw per-byte sensors (gas_byte_N / water_byte_N)
+    for off in GAS_BYTE_RANGE:
+        key = f"gas_byte_{off}"
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(var.set_gas_byte_sensor(off, sens))
+    for off in WATER_BYTE_RANGE:
+        key = f"water_byte_{off}"
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(var.set_water_byte_sensor(off, sens))

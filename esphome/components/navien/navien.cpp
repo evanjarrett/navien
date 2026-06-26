@@ -156,7 +156,9 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
 
     if (this->is_rt) {
       this->update_water_sensors();
-      publish_raw_frame(this->water_raw_sensor, reinterpret_cast<const uint8_t *>(&water), sizeof(WATER_DATA));
+      const uint8_t *raw = reinterpret_cast<const uint8_t *>(&water);
+      publish_raw_frame(this->water_raw_sensor, raw, sizeof(WATER_DATA));
+      publish_raw_bytes(this->water_byte_sensors_, raw, HDR_SIZE, sizeof(WATER_DATA));
     }
   }
 
@@ -229,7 +231,9 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
 
     if (this->is_rt) {
       this->update_gas_sensors();
-      publish_raw_frame(this->gas_raw_sensor, reinterpret_cast<const uint8_t *>(&gas), sizeof(GAS_DATA));
+      const uint8_t *raw = reinterpret_cast<const uint8_t *>(&gas);
+      publish_raw_frame(this->gas_raw_sensor, raw, sizeof(GAS_DATA));
+      publish_raw_bytes(this->gas_byte_sensors_, raw, HDR_SIZE, sizeof(GAS_DATA));
     }
   }
 
@@ -600,6 +604,14 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     else
       buf[0] = '\0';
     sensor->publish_state(buf);
+  }
+
+  void Navien::publish_raw_bytes(sensor::Sensor *const *sensors, const uint8_t *data, uint8_t base_offset, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+      sensor::Sensor *s = sensors[base_offset + i];
+      if (s != nullptr)
+        s->publish_state(data[i]);
+    }
   }
 
   bool Navien::is_dhw_only(DEVICE_TYPE type) {

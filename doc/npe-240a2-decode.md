@@ -143,6 +143,24 @@ byte `N` is hex pair index `N - 6`. Record these in HA history and split per byt
 in SQL (`split`/`substr`) to study how the unknown positions move with events —
 and to finally separate the sub-frame variants the blending hid.
 
+For eyeballing in HA, any individual byte can also be exposed as a **numeric**
+sensor via `gas_byte_N` / `water_byte_N` keys on the hub `sensor` platform
+(N = absolute packet offset, gas 6–47 / water 6–39):
+
+```yaml
+sensor:
+  - platform: navien
+    id: navien_main
+    # …
+    gas_byte_32:
+      name: "GByte 32"
+    water_byte_19:
+      name: "WByte 19"
+```
+
+These are also frame-aligned. The hex dumps remain the better bulk-analysis
+input (one row = one whole frame); the per-byte sensors are for live dashboards.
+
 ## Note: panel/controller version vs the app
 
 The app's "Software Update Ver. 17.0" is the **NaviLink/app** firmware, not the
