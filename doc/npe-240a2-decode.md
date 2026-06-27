@@ -93,9 +93,9 @@ Data-driven, no app label — treat as tentative pending post-reflash raw captur
 | water 20–23 | "per-model constants" | a single 4-byte status block (move in lockstep, ~25 distinct tuples); byte 23 = phase (0/0x20/0x3F) |
 | water 25–26 | unknown | mirror `system_status` (24); byte 25 toggles 0↔1 every packet = sequence/handshake bit |
 | water 27 | `boiler_active` boolean | NOT boolean here — 87 distinct values 0–249 (likely frame-blended) |
-| water 30/31 | "Counter B (0xFF on NCB-H)" | real 16-bit LE monotonic counter (~90 min/increment; quantity undetermined) |
+| water 30/31 | "Counter B (0xFF on NCB-H)" | **cumulative gas-volume odometer, ~0.25 m³/tick** (16-bit LE). Confirmed gas-locked: r=0.9998 vs cumulative gas; flat overnight while the burner is off, ticks only while gas flows; a 16h/+1.2 m³ capture advanced it +4 (pred +4.7). Decoded as the `gas_odometer` sensor. The earlier "~90-min timer" guess is refuted. |
 | gas 26/27 | "always 0x00" | vary on NPE2 — a paired state word, moves in lockstep during heating |
-| gas 33/34 | "Counter C ÷12.015" | **refuted** — measured ratio ~3.65, not a clean counter |
+| gas 33 | "Counter C ÷12.015" | coarse cumulative gas-volume odometer **~1.0 m³/tick** (r=0.99, locks 4:1 with water 30/31). MEDIUM confidence — needs a multi-m³ sample to tick. The "÷12" is draws/tick, not the unit. |
 | gas 35 | "0x00" | 3-state firing level: 0x42 = max fire (kcal≈16138), 0x00 = moderate, 0x3F = low-fire |
 | gas 42–47 | undecoded tail | byte 42 = sub-frame address; 44–47 = 60-day-constant device-identity params (0x5180…) in the dominant subframe |
 

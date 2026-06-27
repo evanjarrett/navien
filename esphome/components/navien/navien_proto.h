@@ -215,8 +215,16 @@ typedef struct {
   uint8_t boiler_active; // Boiler Active Boolean on NCB-H; NOT boolean on NPE-240A2 (87 distinct values 0-249 — likely frame-blended)
   uint8_t unknown_28; // Counter A_lo -- pinned to 255 on NCB-H; on NPE/NPE2 = Total Operating Time LOW byte (LE pair 28/29 mirrors gas total_operating_time 36/37)
   uint8_t unknown_29; // Counter A_hi -- pinned to 255 on NCB-H; on NPE/NPE2 = Total Operating Time HIGH byte. Confirmed: 28/29 tracks gas 36/37 step-for-step over 2 months (=275h). Redundant with gas op-time; no need to expose.
-  uint8_t unknown_30; // Counter B_lo -- pinned to 255 on NCB-H models; on NPE-240A2 30/31 = a real 16-bit LE monotonic counter (~90 min/increment; quantity undetermined)
-  uint8_t unknown_31; // Counter B_hi -- pinned to 255 on NCB-H models
+  // Counter B (pinned to 255 on NCB-H). On NPE-240A2 the LE pair 30/31 is a
+  // cumulative GAS-VOLUME odometer at ~0.25 m3/tick (NOT a ~90-min timer — that
+  // earlier guess is refuted). Confirmed gas-locked: r=0.9998 vs cumulative gas
+  // over 2 months; sits flat overnight whenever the burner is off (recirc-off
+  // window, zero gas) and resumes ticking the instant gas flows; a 16h capture
+  // burning +1.2 m3 advanced it +4 ticks (predicted +1.2 x 3.91 = +4.7). Locks
+  // 4:1 with gas unknown_33 (coarse 1 m3/tick), forming a 10:4:1 family with the
+  // gas 24/25 0.1 m3 odometer. Exposed as the `gas_odometer` sensor (raw ticks).
+  uint8_t gas_odometer_lo; // 30
+  uint8_t gas_odometer_hi; // 31
   uint8_t unknown_32; // NPE-240A2: a frame-subtype discriminator
   uint8_t recirculation_enabled;
   uint8_t unknown_34;
@@ -255,8 +263,8 @@ typedef struct {
   uint8_t  cumulative_domestic_usage_cnt_lo; // 30 Domestic Usage Counter; raw value is "in 10 usage increments" so decode ×10 (NPE-240A2 app-confirmed)
   uint8_t  cumulative_domestic_usage_cnt_hi; // 31
   uint8_t  unknown_32;                       // 0x00 on NCB-H; on NPE-240A2 a frame-subtype discriminator (189 dominant + sparse variants) — see doc/npe-240a2-decode.md
-  uint8_t  unknown_33;                       // Counter C_lo - "matches Water Counter A / 12.015" hypothesis REFUTED on NPE-240A2 (measured ratio ~3.65, not a clean counter)
-  uint8_t  unknown_34;                       // Counter C_hi
+  uint8_t  unknown_33;                       // Counter C_lo. On NPE-240A2 = coarse cumulative GAS-VOLUME odometer ~1.0 m3/tick (r=0.99 vs cumulative gas; locks 4:1 with water 30/31). The htumanyan "Water Counter A / 12.015" guess is refuted; the "12" is draw-count/tick, the 1.0 m3/tick is the fundamental unit. MEDIUM confidence — needs a multi-m3 sample to tick (held flat across a 1.2 m3 window). Read in idle context (gas34 in {14..17}); active-heating frames carry firing garbage here.
+  uint8_t  unknown_34;                       // Counter C_hi -- NOT a high byte of 33 (33 counts its own increments from its own epoch); idle ladder {14..17}, see unknown_35 firing-level
   uint8_t  unknown_35;                       // 0x00 on NCB-H; on NPE-240A2 a 3-state firing-level: 0x42=max fire (kcal≈16138), 0x00=moderate, 0x3F=low-fire
   uint8_t  total_operating_time_lo;          // 36
   uint8_t  total_operating_time_hi;          // 37

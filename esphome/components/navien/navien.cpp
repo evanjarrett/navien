@@ -154,6 +154,8 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
 
     this->state.water.error_code = water.error_code_hi << 8 | water.error_code_lo;
     this->state.water.error_level = water.error_level;
+    // Cumulative gas-volume odometer (~0.25 m3/tick). See navien_proto.h WATER_DATA.
+    this->state.water.gas_odometer = water.gas_odometer_hi << 8 | water.gas_odometer_lo;
 
     // Stash the raw frame so the raw sensors publish on the normal update path
     // (update_water_sensors), independent of real_time mode.
@@ -322,6 +324,9 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     }
     if (this->recirc_running_sensor != nullptr){
       this->recirc_running_sensor->publish_state(this->state.water.recirc_running);
+    }
+    if (this->gas_odometer_sensor != nullptr){
+      this->gas_odometer_sensor->publish_state(this->state.water.gas_odometer);
     }
 
 #ifdef USE_CLIMATE

@@ -58,6 +58,7 @@ CONF_REAL_TIME          = "real_time"
 CONF_HEAT_CAPACITY      = "heat_capacity"
 CONF_RECIRC_MODE        = "recirc_mode"
 CONF_TOTAL_DHW_USAGE    = "total_dhw_usage"
+CONF_GAS_ODOMETER       = "gas_odometer"
 CONF_TOTAL_OPERATING_TIME       = "total_operating_time"
 CONF_BOILER_ACTIVE              = "boiler_active"
 CONF_CUMULATIVE_DWH_USAGE_HOURS = "total_dhw_usage_hours"
@@ -174,6 +175,15 @@ CONFIG_SCHEMA = cv.All(
                 unit_of_measurement=UNIT_EMPTY,
                 accuracy_decimals=0,
                 icon="mdi:water-boiler",
+            ),
+            # Cumulative gas-volume odometer from water bytes 30/31 (raw ticks,
+            # ~0.25 m3/tick). Apply `filters: [multiply: 0.25]` + UNIT_CUBIC_METER
+            # in YAML for an approximate m3 reading. See navien_proto.h.
+            cv.Optional(CONF_GAS_ODOMETER): sensor.sensor_schema(
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                icon="mdi:counter",
             ),
             cv.Optional(CONF_TOTAL_OPERATING_TIME): sensor.sensor_schema(
                 unit_of_measurement=UNIT_HOUR,
@@ -321,6 +331,10 @@ async def to_code(config):
     if CONF_TOTAL_DHW_USAGE in config:
         sens = await sensor.new_sensor(config[CONF_TOTAL_DHW_USAGE])
         cg.add(var.set_total_dhw_usage_sensor(sens))
+
+    if CONF_GAS_ODOMETER in config:
+        sens = await sensor.new_sensor(config[CONF_GAS_ODOMETER])
+        cg.add(var.set_gas_odometer_sensor(sens))
 
     if CONF_TOTAL_OPERATING_TIME in config:
         sens = await sensor.new_sensor(config[CONF_TOTAL_OPERATING_TIME])

@@ -109,6 +109,7 @@ namespace navien {
       bool recirc_running;
       uint16_t error_code;
       uint8_t error_level;
+      uint16_t gas_odometer;  // water bytes 30/31 LE — cumulative gas-volume odometer, ~0.25 m3/tick
     } water;
     struct{
       float  dhw_set_temp;
@@ -188,6 +189,7 @@ namespace navien {
     void set_boiler_active_sensor(binary_sensor::BinarySensor *sensor) { boiler_active_sensor = sensor; } 
     void set_days_since_install_sensor(sensor::Sensor *sensor) { days_since_install_sensor = sensor; }
     void set_total_dhw_usage_sensor(sensor::Sensor *sensor) { total_dhw_usage_sensor = sensor; }
+    void set_gas_odometer_sensor(sensor::Sensor *sensor) { gas_odometer_sensor = sensor; }
     void set_total_operating_time_sensor(sensor::Sensor *sensor) { total_operating_time_sensor = sensor; }
     void set_controller_version_sensor(text_sensor::TextSensor *sensor) { controller_version_sensor = sensor; }
     void set_panel_version_sensor(text_sensor::TextSensor *sensor) { panel_version_sensor = sensor; }
@@ -250,6 +252,7 @@ namespace navien {
     sensor::Sensor *outdoor_temp_sensor = nullptr;
     sensor::Sensor *heat_capacity_sensor = nullptr;
     sensor::Sensor *total_dhw_usage_sensor = nullptr;
+    sensor::Sensor *gas_odometer_sensor = nullptr;
     sensor::Sensor *total_operating_time_sensor = nullptr;
     sensor::Sensor *cumulative_dwh_usage_hours_sensor = nullptr;
     sensor::Sensor *cumulative_sh_usage_hours_sensor = nullptr;
