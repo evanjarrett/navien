@@ -71,6 +71,14 @@ void NavienLink::parse_status_packet(){
     for (uint8_t i = 0; i < NAVIEN_CASCADE_MAX; ++i)
       if (visitors_[i]) visitors_[i]->on_gas(recv_buffer.gas, recv_buffer.hdr.src);
     break;
+  default:
+    // A checksum-valid status packet whose dst is neither water (0x50) nor gas
+    // (0x0F). Previously these fell through silently; surface them so we can tell
+    // whether any third packet class is being dropped. Warning level so it shows
+    // without enabling DEBUG; cannot spam in normal operation.
+    ESP_LOGW(TAG, "Unhandled status packet dst=0x%02X src=0x%02X len=%d",
+             this->recv_buffer.hdr.dst, this->recv_buffer.hdr.src, this->recv_buffer.hdr.len);
+    break;
   }
 }
   
