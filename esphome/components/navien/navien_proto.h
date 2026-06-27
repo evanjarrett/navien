@@ -213,8 +213,8 @@ typedef struct {
   uint8_t unknown_25; // NPE-240A2: mirrors system_status (24) via lookup; toggles 0↔1 every packet = sequence/handshake bit
   uint8_t unknown_26; // NPE-240A2: paired with 25
   uint8_t boiler_active; // Boiler Active Boolean on NCB-H; NOT boolean on NPE-240A2 (87 distinct values 0-249 — likely frame-blended)
-  uint8_t unknown_28; // Counter A_lo -- pinned to 255 on NCB-H models
-  uint8_t unknown_29; // Counter A_hi -- pinned to 255 on NCB-H models; on NPE-240A2 a frame-subtype discriminator
+  uint8_t unknown_28; // Counter A_lo -- pinned to 255 on NCB-H; on NPE/NPE2 = Total Operating Time LOW byte (LE pair 28/29 mirrors gas total_operating_time 36/37)
+  uint8_t unknown_29; // Counter A_hi -- pinned to 255 on NCB-H; on NPE/NPE2 = Total Operating Time HIGH byte. Confirmed: 28/29 tracks gas 36/37 step-for-step over 2 months (=275h). Redundant with gas op-time; no need to expose.
   uint8_t unknown_30; // Counter B_lo -- pinned to 255 on NCB-H models; on NPE-240A2 30/31 = a real 16-bit LE monotonic counter (~90 min/increment; quantity undetermined)
   uint8_t unknown_31; // Counter B_hi -- pinned to 255 on NCB-H models
   uint8_t unknown_32; // NPE-240A2: a frame-subtype discriminator
