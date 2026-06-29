@@ -57,7 +57,12 @@ void NavienWaterHeater::control(const WaterHeaterCall &call) {
   }
 
   if (!std::isnan(call.get_target_temperature())) {
-    parent->send_dhw_set_temp_cmd(call.get_target_temperature());
+    float target = call.get_target_temperature();
+    parent->send_dhw_set_temp_cmd(target);
+    // Hold optimistically until the unit echoes the value back (or it times out).
+    parent->set_pending_dhw_setpoint(target);
+    this->set_target_temperature_state(roundf(target * 2.0f) / 2.0f);
+    this->publish_state();
   }
 
   // Away setting not supported

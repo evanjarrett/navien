@@ -329,6 +329,10 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       this->gas_odometer_sensor->publish_state(this->state.water.gas_odometer);
     }
 
+    // Resolve the displayed setpoint once (optimistic hold while a set is in
+    // flight, else the device value). Side-effecting: call exactly once here.
+    float dhw_target = this->resolve_dhw_target(this->state.water.dhw_set_temp);
+
 #ifdef USE_CLIMATE
     // Update the climate control with the current target temperature
     if (this->climate != nullptr){
@@ -341,7 +345,7 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       }
 
       this->climate->current_temperature = this->state.water.outlet_temp;
-      this->climate->target_temperature = this->state.water.dhw_set_temp;
+      this->climate->target_temperature = dhw_target;
       this->climate->publish_state();
     }
 #endif
@@ -349,7 +353,7 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
 #ifdef USE_WATER_HEATER
     if (this->water_heater != nullptr){
       this->water_heater->set_current_temperature(this->state.water.outlet_temp);
-      this->water_heater->set_target_temperature_state(this->state.water.dhw_set_temp);
+      this->water_heater->set_target_temperature_state(dhw_target);
       this->water_heater->set_on_state(this->state.power == POWER_ON);
       this->water_heater->publish_state();
     }

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cinttypes>
+#include <cmath>
 #include <list>
 
 #include "esphome/core/component.h"
@@ -162,6 +163,35 @@ namespace navien {
     void send_scheduled_recirculation_on_cmd();
     void send_scheduled_recirculation_off_cmd();
 
+    // --- Optimistic DHW setpoint hold ---------------------------------------
+    // The protocol has no command ACK, and every status packet re-reports the
+    // unit's current setpoint. So when the user sets a target we'd otherwise see
+    // it snap back to the stale device value during the 2-4 s send/confirm round
+    // trip. Instead we remember the requested value (snapped to the unit's native
+    // 0.5 °C grid) and keep displaying it until the device reports a matching
+    // value ("confirm" = reported setpoint reaches ours) or a safety timeout
+    // elapses, so it can never get stuck.
+    static constexpr uint32_t PENDING_DHW_TIMEOUT_MS = 10000;
+
+    void set_pending_dhw_setpoint(float target_c) {
+      this->pending_dhw_setpoint_ = roundf(target_c * 2.0f) / 2.0f;  // 0.5 °C grid
+      this->pending_dhw_deadline_ = millis() + PENDING_DHW_TIMEOUT_MS;
+    }
+
+    // Pick the value to display; clears the hold on confirm or timeout. Has side
+    // effects (clears pending), so call exactly once per status update.
+    float resolve_dhw_target(float reported_c) {
+      if (!std::isnan(this->pending_dhw_setpoint_)) {
+        bool confirmed = fabsf(reported_c - this->pending_dhw_setpoint_) < 0.25f;
+        bool expired = (int32_t) (millis() - this->pending_dhw_deadline_) >= 0;
+        if (confirmed || expired)
+          this->pending_dhw_setpoint_ = NAN;
+        else
+          return this->pending_dhw_setpoint_;
+      }
+      return reported_c;
+    }
+
   public:
     void set_dhw_set_temp_sensor(sensor::Sensor *sensor) { dhw_set_temp_sensor = sensor; }
     void set_inlet_temp_sensor(sensor::Sensor *sensor) { inlet_temp_sensor = sensor; }
@@ -232,6 +262,10 @@ namespace navien {
 #endif
 
   protected:
+    // Optimistic DHW setpoint hold state (see set_pending_dhw_setpoint above).
+    float pending_dhw_setpoint_ = NAN;   // °C, snapped to 0.5 °C grid; NAN = no hold
+    uint32_t pending_dhw_deadline_ = 0;  // millis() at which the hold gives up
+
     /**
      * Sensor definitions
      */
