@@ -37,6 +37,11 @@ void NavienClimate::control(const climate::ClimateCall &call){
     
     ESP_LOGD(TAG, "Setting target temperature to %f", target);
     parent->send_dhw_set_temp_cmd(target);
+    // Hold this value optimistically and show it now, so stale device echoes
+    // during the send/confirm round trip don't snap the UI back.
+    parent->set_pending_dhw_setpoint(target);
+    this->target_temperature = roundf(target * 2.0f) / 2.0f;
+    this->publish_state();
   }
     
   if (call.get_mode().has_value()) {

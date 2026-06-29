@@ -1,4 +1,5 @@
 #include <cmath>
+#include <cstring>
 #include <string>
 
 #include "esphome.h"
@@ -153,6 +154,13 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
 
     this->state.water.error_code = water.error_code_hi << 8 | water.error_code_lo;
     this->state.water.error_level = water.error_level;
+    // Cumulative gas-volume odometer (~0.25 m3/tick). See navien_proto.h WATER_DATA.
+    this->state.water.gas_odometer = water.gas_odometer_hi << 8 | water.gas_odometer_lo;
+
+    // Stash the raw frame so the raw sensors publish on the normal update path
+    // (update_water_sensors), independent of real_time mode.
+    this->water_raw_len_ = sizeof(WATER_DATA);
+    memcpy(this->water_raw_buf_, &water, this->water_raw_len_);
 
     if (this->is_rt)
       this->update_water_sensors();
@@ -193,7 +201,10 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.gas.outdoor_temp = NavienLink::ot2c(gas.outdoor_temp);
     this->state.device_type = static_cast<DEVICE_TYPE>(gas.device_type);
     this->state.gas.heat_capacity = gas.heat_capacity * 0.5f;
-    this->state.gas.total_dhw_usage = gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo;
+    // Bytes 30/31 are the Domestic Usage Counter "in 10 usage increments" (see
+    // navien_proto.h). Multiply the raw 16-bit value by 10 to get the real draw
+    // count. Verified on NPE-240A2 against the Navien app ("Domestic Usage Cnt").
+    this->state.gas.total_dhw_usage = (gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo) * 10;
     this->state.gas.total_operating_time = gas.total_operating_time_hi << 8 | gas.total_operating_time_lo;
     this->state.gas.accumulated_gas_usage = gas.cumulative_gas_hi << 8 | gas.cumulative_gas_lo;
     this->state.gas.current_gas_usage = gas.current_gas_hi << 8 | gas.current_gas_lo;
@@ -219,8 +230,13 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     this->state.panel_version = panVers.substr(0, 1) + "." + panVers.substr(1, 1);
 
     this->state.days_since_install = gas.days_since_install_hi << 8 | gas.days_since_install_lo;
-    this->state.cumulative_domestic_usage_cnt = gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo;
+    this->state.cumulative_domestic_usage_cnt = (gas.cumulative_domestic_usage_cnt_hi << 8 | gas.cumulative_domestic_usage_cnt_lo) * 10; // ×10: "10 usage increments"
     this->state.hotbutton_mode_enabled = gas.system_status_2 & SYS_STATUS_2_HOTBUTTON_ENABLED;
+
+    // Stash the raw frame so the raw sensors publish on the normal update path
+    // (update_gas_sensors), independent of real_time mode.
+    this->gas_raw_len_ = sizeof(GAS_DATA);
+    memcpy(this->gas_raw_buf_, &gas, this->gas_raw_len_);
 
     if (this->is_rt)
       this->update_gas_sensors();
@@ -309,6 +325,13 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     if (this->recirc_running_sensor != nullptr){
       this->recirc_running_sensor->publish_state(this->state.water.recirc_running);
     }
+    if (this->gas_odometer_sensor != nullptr){
+      this->gas_odometer_sensor->publish_state(this->state.water.gas_odometer);
+    }
+
+    // Resolve the displayed setpoint once (optimistic hold while a set is in
+    // flight, else the device value). Side-effecting: call exactly once here.
+    float dhw_target = this->resolve_dhw_target(this->state.water.dhw_set_temp);
 
 #ifdef USE_CLIMATE
     // Update the climate control with the current target temperature
@@ -322,7 +345,7 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       }
 
       this->climate->current_temperature = this->state.water.outlet_temp;
-      this->climate->target_temperature = this->state.water.dhw_set_temp;
+      this->climate->target_temperature = dhw_target;
       this->climate->publish_state();
     }
 #endif
@@ -330,7 +353,7 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
 #ifdef USE_WATER_HEATER
     if (this->water_heater != nullptr){
       this->water_heater->set_current_temperature(this->state.water.outlet_temp);
-      this->water_heater->set_target_temperature_state(this->state.water.dhw_set_temp);
+      this->water_heater->set_target_temperature_state(dhw_target);
       this->water_heater->set_on_state(this->state.power == POWER_ON);
       this->water_heater->publish_state();
     }
@@ -372,6 +395,11 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     if (this->error_level_sensor != nullptr){
         this->error_level_sensor->publish_state(this->state.water.error_level);
     }
+
+    if (this->water_raw_len_ > 0) {
+      publish_raw_frame(this->water_raw_sensor, this->water_raw_buf_, this->water_raw_len_);
+      publish_raw_bytes(this->water_byte_sensors_, this->water_raw_buf_, HDR_SIZE, this->water_raw_len_);
+    }
   }
 
   void Navien::update_gas_sensors(){
@@ -400,11 +428,15 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
     }
     if (this->heat_capacity_sensor != nullptr)
       this->heat_capacity_sensor->publish_state(this->state.gas.heat_capacity);
-    if (this->sh_set_temp_sensor != nullptr)
+    // Space-heating fields only decode correctly on combi/boiler models. On
+    // DHW-only tankless units (NPE/NPN family, e.g. NPE-240A2) these bytes carry
+    // unrelated data, so skip publishing them. See doc/npe-240a2-decode.md.
+    const bool has_space_heating = !is_dhw_only(this->state.device_type);
+    if (has_space_heating && this->sh_set_temp_sensor != nullptr)
       this->sh_set_temp_sensor->publish_state(this->state.gas.sh_set_temp);
-    if (this->sh_outlet_temp_sensor != nullptr)
+    if (has_space_heating && this->sh_outlet_temp_sensor != nullptr)
       this->sh_outlet_temp_sensor->publish_state(this->state.gas.sh_outlet_temp);
-    if (this->sh_return_temp_sensor != nullptr)
+    if (has_space_heating && this->sh_return_temp_sensor != nullptr)
       this->sh_return_temp_sensor->publish_state(this->state.gas.sh_return_temp);
     if (this->outdoor_temp_sensor != nullptr)
       this->outdoor_temp_sensor->publish_state(this->state.gas.outdoor_temp);
@@ -414,9 +446,12 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       this->total_dhw_usage_sensor->publish_state(this->state.gas.total_dhw_usage);
     if (this->total_operating_time_sensor != nullptr)
       this->total_operating_time_sensor->publish_state(this->state.gas.total_operating_time);
-    if (this->cumulative_dwh_usage_hours_sensor != nullptr)
+    // 38/39 (DHW usage hours) reads 0 and 40/41 (SH usage hours) reads fast-
+    // varying garbage on NPE-240A2 — both were derived on NCB-H combi units.
+    // Gate on space-heating models until the true NPE2 positions are confirmed.
+    if (has_space_heating && this->cumulative_dwh_usage_hours_sensor != nullptr)
       this->cumulative_dwh_usage_hours_sensor->publish_state(this->state.gas.cumulative_dwh_usage_hours);
-    if (this->cumulative_sh_usage_hours_sensor != nullptr)
+    if (has_space_heating && this->cumulative_sh_usage_hours_sensor != nullptr)
       this->cumulative_sh_usage_hours_sensor->publish_state(this->state.gas.cumulative_sh_usage_hours);
     if (this->cumulative_domestic_usage_cnt_sensor != nullptr)
       this->cumulative_domestic_usage_cnt_sensor->publish_state(this->state.cumulative_domestic_usage_cnt);
@@ -426,6 +461,11 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
       this->controller_version_sensor->publish_state(this->state.controller_version);
     if (this->panel_version_sensor != nullptr)
       this->panel_version_sensor->publish_state(this->state.panel_version);
+
+    if (this->gas_raw_len_ > 0) {
+      publish_raw_frame(this->gas_raw_sensor, this->gas_raw_buf_, this->gas_raw_len_);
+      publish_raw_bytes(this->gas_byte_sensors_, this->gas_raw_buf_, HDR_SIZE, this->gas_raw_len_);
+    }
   }
 
   void Navien::loop() {
@@ -566,6 +606,47 @@ void NavienBase::send_scheduled_recirculation_off_cmd() {
         return "CAS NVW";
       default:
         return "unknown";
+    }
+  }
+
+  void Navien::publish_raw_frame(text_sensor::TextSensor *sensor, const uint8_t *data, size_t len) {
+    if (sensor == nullptr)
+      return;
+    // 3 chars per byte ("XX ") + null terminator. Cap defensively.
+    static const size_t MAX_BYTES = 64;
+    if (len > MAX_BYTES)
+      len = MAX_BYTES;
+    char buf[3 * MAX_BYTES + 1];
+    size_t pos = 0;
+    for (size_t i = 0; i < len; i++) {
+      pos += snprintf(buf + pos, sizeof(buf) - pos, "%02X ", data[i]);
+    }
+    if (pos > 0)
+      buf[pos - 1] = '\0';  // trim trailing space
+    else
+      buf[0] = '\0';
+    sensor->publish_state(buf);
+  }
+
+  void Navien::publish_raw_bytes(sensor::Sensor *const *sensors, const uint8_t *data, uint8_t base_offset, size_t len) {
+    for (size_t i = 0; i < len; i++) {
+      sensor::Sensor *s = sensors[base_offset + i];
+      if (s != nullptr)
+        s->publish_state(data[i]);
+    }
+  }
+
+  bool Navien::is_dhw_only(DEVICE_TYPE type) {
+    switch(type){
+      case NPE:
+      case CAS_NPE:
+      case NPN:
+      case CAS_NPN:
+      case NPE2:
+      case CAS_NPE2:
+        return true;
+      default:
+        return false;
     }
   }
 

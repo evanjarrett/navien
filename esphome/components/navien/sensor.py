@@ -58,6 +58,7 @@ CONF_REAL_TIME          = "real_time"
 CONF_HEAT_CAPACITY      = "heat_capacity"
 CONF_RECIRC_MODE        = "recirc_mode"
 CONF_TOTAL_DHW_USAGE    = "total_dhw_usage"
+CONF_GAS_ODOMETER       = "gas_odometer"
 CONF_TOTAL_OPERATING_TIME       = "total_operating_time"
 CONF_BOILER_ACTIVE              = "boiler_active"
 CONF_CUMULATIVE_DWH_USAGE_HOURS = "total_dhw_usage_hours"
@@ -68,6 +69,28 @@ CONF_OTHER_NAVILINK_INSTALLED   = "other_navilink_installed"
 CONF_ERROR_CODE                 = "error_code"
 CONF_ERROR_LEVEL                = "error_level"
 
+
+# Optional raw per-byte sensors for reverse-engineering. Any packet byte can be
+# exposed to HA as a numeric sensor via keys like `gas_byte_32` / `water_byte_19`
+# (offset = absolute packet offset). The payload begins at offset 6.
+GAS_BYTE_RANGE = range(6, 48)    # GAS_DATA spans packet bytes 6..47
+WATER_BYTE_RANGE = range(6, 40)  # WATER_DATA spans packet bytes 6..39
+
+def _raw_byte_schema():
+    schema = {}
+    for off in GAS_BYTE_RANGE:
+        schema[cv.Optional(f"gas_byte_{off}")] = sensor.sensor_schema(
+            accuracy_decimals=0,
+            icon="mdi:hexadecimal",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        )
+    for off in WATER_BYTE_RANGE:
+        schema[cv.Optional(f"water_byte_{off}")] = sensor.sensor_schema(
+            accuracy_decimals=0,
+            icon="mdi:hexadecimal",
+            entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+        )
+    return schema
 
 CONFIG_SCHEMA = cv.All(
     cv.Schema(
@@ -153,6 +176,15 @@ CONFIG_SCHEMA = cv.All(
                 accuracy_decimals=0,
                 icon="mdi:water-boiler",
             ),
+            # Cumulative gas-volume odometer from water bytes 30/31 (raw ticks,
+            # ~0.25 m3/tick). Apply `filters: [multiply: 0.25]` + UNIT_CUBIC_METER
+            # in YAML for an approximate m3 reading. See navien_proto.h.
+            cv.Optional(CONF_GAS_ODOMETER): sensor.sensor_schema(
+                accuracy_decimals=0,
+                state_class=STATE_CLASS_TOTAL_INCREASING,
+                entity_category=ENTITY_CATEGORY_DIAGNOSTIC,
+                icon="mdi:counter",
+            ),
             cv.Optional(CONF_TOTAL_OPERATING_TIME): sensor.sensor_schema(
                 unit_of_measurement=UNIT_HOUR,
                 accuracy_decimals=0,
@@ -197,6 +229,7 @@ CONFIG_SCHEMA = cv.All(
             cv.Optional(CONF_SRC): cv.int_range(min=0, max=15)
         }
     )
+    .extend(_raw_byte_schema())
     .extend(cv.polling_component_schema("5s"))
     .extend(uart.UART_DEVICE_SCHEMA)
 )
@@ -299,6 +332,10 @@ async def to_code(config):
         sens = await sensor.new_sensor(config[CONF_TOTAL_DHW_USAGE])
         cg.add(var.set_total_dhw_usage_sensor(sens))
 
+    if CONF_GAS_ODOMETER in config:
+        sens = await sensor.new_sensor(config[CONF_GAS_ODOMETER])
+        cg.add(var.set_gas_odometer_sensor(sens))
+
     if CONF_TOTAL_OPERATING_TIME in config:
         sens = await sensor.new_sensor(config[CONF_TOTAL_OPERATING_TIME])
         cg.add(var.set_total_operating_time_sensor(sens))
@@ -326,3 +363,15 @@ async def to_code(config):
     if CONF_ERROR_LEVEL in config:
         sens = await sensor.new_sensor(config[CONF_ERROR_LEVEL])
         cg.add(var.set_error_level_sensor(sens))
+
+    # Optional raw per-byte sensors (gas_byte_N / water_byte_N)
+    for off in GAS_BYTE_RANGE:
+        key = f"gas_byte_{off}"
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(var.set_gas_byte_sensor(off, sens))
+    for off in WATER_BYTE_RANGE:
+        key = f"water_byte_{off}"
+        if key in config:
+            sens = await sensor.new_sensor(config[key])
+            cg.add(var.set_water_byte_sensor(off, sens))

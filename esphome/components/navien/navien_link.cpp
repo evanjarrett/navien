@@ -45,12 +45,16 @@ bool NavienLink::seek_to_marker(){
 
 void NavienLink::parse_control_packet(){
   ESP_LOGV(TAG, "Got Control Packet => %d bytes", this->recv_buffer.hdr.len + HDR_SIZE);
-  if (!this->other_navilink_installed
-      && this->recv_buffer.hdr.len == NAVILINK_PRESENT[offsetof(HEADER, len)]
+  if (this->recv_buffer.hdr.len == NAVILINK_PRESENT[offsetof(HEADER, len)]
       && std::memcmp(this->recv_buffer.raw_data, NAVILINK_PRESENT, sizeof(NAVILINK_PRESENT)) == 0){
-    /* This is a NAVILINK_PRESENT_PKT that wasn't sent by us, so anothe NaviLink is also hooked up */
-    ESP_LOGW(TAG, "Detected NAVILINK_PRESENT packet from another NaviLink device, will stop sending NAVILINK_PRESENT packets until rebooted %d", sizeof(NAVILINK_PRESENT));
-    this->other_navilink_installed = true;
+    /* A NAVILINK_PRESENT_PKT that wasn't sent by us (we don't receive our own
+       transmissions), so a real NaviLink is on the bus. Stamp when we last heard
+       it so we can detect its removal. */
+    this->last_navilink_seen_ms_ = millis();
+    if (!this->other_navilink_installed) {
+      ESP_LOGW(TAG, "Detected NAVILINK_PRESENT from another NaviLink device; deferring to it and pausing our beacon");
+      this->other_navilink_installed = true;
+    }
   }
   //  Navien::print_buffer(this->recv_buffer.raw_data, this->recv_buffer.hdr.len + HDR_SIZE);
 }
@@ -70,6 +74,14 @@ void NavienLink::parse_status_packet(){
     ESP_LOGD(TAG, "SRC:0x%02X => Gas", this->recv_buffer.hdr.src);
     for (uint8_t i = 0; i < NAVIEN_CASCADE_MAX; ++i)
       if (visitors_[i]) visitors_[i]->on_gas(recv_buffer.gas, recv_buffer.hdr.src);
+    break;
+  default:
+    // A checksum-valid status packet whose dst is neither water (0x50) nor gas
+    // (0x0F). Previously these fell through silently; surface them so we can tell
+    // whether any third packet class is being dropped. Warning level so it shows
+    // without enabling DEBUG; cannot spam in normal operation.
+    ESP_LOGW(TAG, "Unhandled status packet dst=0x%02X src=0x%02X len=%d",
+             this->recv_buffer.hdr.dst, this->recv_buffer.hdr.src, this->recv_buffer.hdr.len);
     break;
   }
 }
@@ -138,6 +150,16 @@ void NavienLink::receive() {
   if (uart == nullptr) {
     ESP_LOGE(TAG, "UART pointer is null; skipping receive");
     return;
+  }
+
+  // If a NaviLink was detected but we've stopped hearing its beacon, it was
+  // unplugged — drop the flag so we retake the bus (resume our own beacon and
+  // flush queued commands) instead of waiting forever for a beacon-gated window.
+  if (this->other_navilink_installed &&
+      millis() - this->last_navilink_seen_ms_ > NAVILINK_PRESENCE_TIMEOUT_MS) {
+    ESP_LOGW(TAG, "No NaviLink beacon for %" PRIu32 "s; assuming it was removed, resuming control",
+             NAVILINK_PRESENCE_TIMEOUT_MS / 1000);
+    this->other_navilink_installed = false;
   }
 
   int available = uart->available();

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cinttypes>
+#include <cmath>
 #include <list>
 
 #include "esphome/core/component.h"
@@ -109,6 +110,7 @@ namespace navien {
       bool recirc_running;
       uint16_t error_code;
       uint8_t error_level;
+      uint16_t gas_odometer;  // water bytes 30/31 LE — cumulative gas-volume odometer, ~0.25 m3/tick
     } water;
     struct{
       float  dhw_set_temp;
@@ -121,15 +123,15 @@ namespace navien {
       float  sh_return_temp; // combi (and space heat?) models
       float  outdoor_temp;
       uint8_t heat_capacity;
-      uint16_t total_dhw_usage;
+      uint32_t total_dhw_usage;             // bytes 30/31 ×10 ("10 usage increments") — exceeds 16-bit
       uint16_t total_operating_time;
       uint16_t cumulative_dwh_usage_hours;
       uint16_t cumulative_sh_usage_hours;
-      uint16_t cumulative_domestic_usage_cnt;
+      uint32_t cumulative_domestic_usage_cnt; // bytes 30/31 ×10
       uint16_t days_since_install;
     } gas;
 
-    uint16_t cumulative_domestic_usage_cnt;
+    uint32_t cumulative_domestic_usage_cnt; // bytes 30/31 ×10
     uint16_t days_since_install;
     std::string controller_version;
     std::string panel_version;
@@ -161,6 +163,35 @@ namespace navien {
     void send_scheduled_recirculation_on_cmd();
     void send_scheduled_recirculation_off_cmd();
 
+    // --- Optimistic DHW setpoint hold ---------------------------------------
+    // The protocol has no command ACK, and every status packet re-reports the
+    // unit's current setpoint. So when the user sets a target we'd otherwise see
+    // it snap back to the stale device value during the 2-4 s send/confirm round
+    // trip. Instead we remember the requested value (snapped to the unit's native
+    // 0.5 °C grid) and keep displaying it until the device reports a matching
+    // value ("confirm" = reported setpoint reaches ours) or a safety timeout
+    // elapses, so it can never get stuck.
+    static constexpr uint32_t PENDING_DHW_TIMEOUT_MS = 10000;
+
+    void set_pending_dhw_setpoint(float target_c) {
+      this->pending_dhw_setpoint_ = roundf(target_c * 2.0f) / 2.0f;  // 0.5 °C grid
+      this->pending_dhw_deadline_ = millis() + PENDING_DHW_TIMEOUT_MS;
+    }
+
+    // Pick the value to display; clears the hold on confirm or timeout. Has side
+    // effects (clears pending), so call exactly once per status update.
+    float resolve_dhw_target(float reported_c) {
+      if (!std::isnan(this->pending_dhw_setpoint_)) {
+        bool confirmed = fabsf(reported_c - this->pending_dhw_setpoint_) < 0.25f;
+        bool expired = (int32_t) (millis() - this->pending_dhw_deadline_) >= 0;
+        if (confirmed || expired)
+          this->pending_dhw_setpoint_ = NAN;
+        else
+          return this->pending_dhw_setpoint_;
+      }
+      return reported_c;
+    }
+
   public:
     void set_dhw_set_temp_sensor(sensor::Sensor *sensor) { dhw_set_temp_sensor = sensor; }
     void set_inlet_temp_sensor(sensor::Sensor *sensor) { inlet_temp_sensor = sensor; }
@@ -188,9 +219,19 @@ namespace navien {
     void set_boiler_active_sensor(binary_sensor::BinarySensor *sensor) { boiler_active_sensor = sensor; } 
     void set_days_since_install_sensor(sensor::Sensor *sensor) { days_since_install_sensor = sensor; }
     void set_total_dhw_usage_sensor(sensor::Sensor *sensor) { total_dhw_usage_sensor = sensor; }
+    void set_gas_odometer_sensor(sensor::Sensor *sensor) { gas_odometer_sensor = sensor; }
     void set_total_operating_time_sensor(sensor::Sensor *sensor) { total_operating_time_sensor = sensor; }
     void set_controller_version_sensor(text_sensor::TextSensor *sensor) { controller_version_sensor = sensor; }
     void set_panel_version_sensor(text_sensor::TextSensor *sensor) { panel_version_sensor = sensor; }
+    // Raw frame dumps (hex) for reverse-engineering unknown bytes. Each is a
+    // space-separated hex string of one fully-parsed frame's payload, where the
+    // first byte = packet offset 6. Frame-aligned (no cross-frame blending).
+    void set_water_raw_sensor(text_sensor::TextSensor *sensor) { water_raw_sensor = sensor; }
+    void set_gas_raw_sensor(text_sensor::TextSensor *sensor) { gas_raw_sensor = sensor; }
+    // Per-byte numeric sensors, indexed by absolute packet offset, for exposing
+    // any (incl. still-unknown) byte to HA. Frame-aligned, like the raw dumps.
+    void set_water_byte_sensor(uint8_t offset, sensor::Sensor *sensor) { if (offset < RAW_BYTE_SLOTS) water_byte_sensors_[offset] = sensor; }
+    void set_gas_byte_sensor(uint8_t offset, sensor::Sensor *sensor) { if (offset < RAW_BYTE_SLOTS) gas_byte_sensors_[offset] = sensor; }
     void set_cumulative_dwh_usage_hours_sensor(sensor::Sensor *sensor) { cumulative_dwh_usage_hours_sensor = sensor; }
     void set_cumulative_sh_usage_hours_sensor(sensor::Sensor *sensor) { cumulative_sh_usage_hours_sensor = sensor; }
     void set_cumulative_domestic_usage_cnt_sensor(sensor::Sensor *sensor) { cumulative_domestic_usage_cnt_sensor = sensor; }
@@ -221,6 +262,10 @@ namespace navien {
 #endif
 
   protected:
+    // Optimistic DHW setpoint hold state (see set_pending_dhw_setpoint above).
+    float pending_dhw_setpoint_ = NAN;   // °C, snapped to 0.5 °C grid; NAN = no hold
+    uint32_t pending_dhw_deadline_ = 0;  // millis() at which the hold gives up
+
     /**
      * Sensor definitions
      */
@@ -241,6 +286,7 @@ namespace navien {
     sensor::Sensor *outdoor_temp_sensor = nullptr;
     sensor::Sensor *heat_capacity_sensor = nullptr;
     sensor::Sensor *total_dhw_usage_sensor = nullptr;
+    sensor::Sensor *gas_odometer_sensor = nullptr;
     sensor::Sensor *total_operating_time_sensor = nullptr;
     sensor::Sensor *cumulative_dwh_usage_hours_sensor = nullptr;
     sensor::Sensor *cumulative_sh_usage_hours_sensor = nullptr;
@@ -255,6 +301,18 @@ namespace navien {
     text_sensor::TextSensor *device_type_sensor = nullptr;
     text_sensor::TextSensor *operating_state_sensor = nullptr;
     text_sensor::TextSensor *recirc_mode_sensor = nullptr;
+    text_sensor::TextSensor *water_raw_sensor = nullptr;
+    text_sensor::TextSensor *gas_raw_sensor = nullptr;
+    // Indexed by absolute packet offset (0..RAW_BYTE_SLOTS-1); most stay null.
+    static const uint8_t RAW_BYTE_SLOTS = 64;
+    sensor::Sensor *water_byte_sensors_[RAW_BYTE_SLOTS] = {};
+    sensor::Sensor *gas_byte_sensors_[RAW_BYTE_SLOTS] = {};
+    // Latest frame payloads, stashed in on_water/on_gas so the raw sensors can
+    // publish from the normal update_*_sensors() path (works without real_time).
+    uint8_t water_raw_buf_[RAW_BYTE_SLOTS] = {};
+    uint8_t gas_raw_buf_[RAW_BYTE_SLOTS] = {};
+    size_t water_raw_len_ = 0;
+    size_t gas_raw_len_ = 0;
 
     binary_sensor::BinarySensor *boiler_active_sensor = nullptr;
     binary_sensor::BinarySensor *conn_status_sensor = nullptr;
@@ -307,6 +365,14 @@ namespace navien {
     virtual void update_water_sensors();
     virtual void update_gas_sensors();
 
+    // Publish a frame's payload bytes as a space-separated hex string to the
+    // given raw text sensor (no-op if the sensor isn't configured).
+    static void publish_raw_frame(text_sensor::TextSensor *sensor, const uint8_t *data, size_t len);
+
+    // Publish each configured per-byte sensor. data[i] is the byte at packet
+    // offset (base_offset + i); sensors is indexed by absolute packet offset.
+    static void publish_raw_bytes(sensor::Sensor *const *sensors, const uint8_t *data, uint8_t base_offset, size_t len);
+
     /**
      * Helper function to convert operating state enum to string
      */
@@ -326,6 +392,16 @@ namespace navien {
      * Helper function to convert recirculation mode enum to string
      */
     static std::string device_recirc_mode_to_str(DEVICE_RECIRC_MODE state);
+
+    /**
+     * True for DHW-only tankless families (NPE/NPN and cascade variants) that
+     * have no space-heating loop. The combi/space-heating gas fields
+     * (sh_*_temp, cumulative_dwh/sh_usage_hours) were reverse-engineered on
+     * NCB-H combi units and do NOT decode correctly on these models — on an
+     * NPE-240A2 they read 0 or fast-varying garbage. Used to gate publishing
+     * those sensors. See doc/npe-240a2-decode.md.
+     */
+    static bool is_dhw_only(DEVICE_TYPE type);
 
   protected:
     // Data, extracted from gas and water packers and stored
