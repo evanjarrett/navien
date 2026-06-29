@@ -209,6 +209,14 @@ protected:
   // Flag indicating if we've seen control packets that we didn't send, which means an actual NaviLink is also present
   bool other_navilink_installed = false;
 
+  // millis() of the last foreign NaviLink beacon. If one was detected but its
+  // beacons then stop for NAVILINK_PRESENCE_TIMEOUT_MS, it was unplugged: clear
+  // other_navilink_installed so we resume sending our own beacon and flushing
+  // queued commands. (Without this, unplugging the NaviLink without rebooting
+  // the ESP leaves the flag latched and strands every queued command.)
+  uint32_t last_navilink_seen_ms_ = 0;
+  static constexpr uint32_t NAVILINK_PRESENCE_TIMEOUT_MS = 30000;
+
   // Buffer for queued commands.
   // TODO: add thread safety - cmd_buffer is used in different thread contexts
   std::list<NAVIEN_CMD> cmd_buffer;
